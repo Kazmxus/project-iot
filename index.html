@@ -1,0 +1,705 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi ESP32 Gesture Dashboard</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<style>
+:root {
+  --bg: #0b1120;
+  --panel: #172235;
+  --inner: #202e43;
+  --border: #304157;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --blue: #38bdf8;
+  --green: #34d399;
+  --yellow: #fbbf24;
+  --red: #fb7185;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Arial, sans-serif;
+}
+main {
+  max-width: 1250px;
+  padding: 30px 20px;
+  margin: auto;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+h1 { font-size: 26px; margin: 0 0 8px; }
+p { margin: 0; color: var(--muted); font-size: 13px; }
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+button {
+  background: var(--blue);
+  color: #071321;
+  border: 0;
+  border-radius: 9px;
+  padding: 12px 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+button:hover { opacity: 0.85; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.secondary {
+  background: var(--inner);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.add-button {
+  font-size: 23px;
+  width: 45px;
+  height: 45px;
+  padding: 0;
+}
+#connectionStatus {
+  font-size: 13px;
+  color: var(--muted);
+}
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.server-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 22px;
+}
+.card-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  margin-bottom: 22px;
+  gap: 12px;
+}
+.card-header h2 { font-size: 18px; margin: 0 0 7px; }
+.topic-label {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.remove-button {
+  background: transparent;
+  color: var(--red);
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.metric {
+  background: var(--inner);
+  border-radius: 12px;
+  padding: 18px;
+  min-height: 120px;
+}
+.metric-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 15px;
+}
+.metric-value {
+  font-weight: bold;
+  font-size: 27px;
+  overflow-wrap: anywhere;
+}
+.metric-detail {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.green { color: var(--green); }
+.red { color: var(--red); }
+.blue { color: var(--blue); }
+.progress {
+  background: #334155;
+  height: 8px;
+  border-radius: 10px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+.progress-fill {
+  width: 0;
+  height: 100%;
+  background: var(--yellow);
+  transition: width 0.2s;
+}
+dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 25px;
+  width: min(440px, 92vw);
+}
+dialog::backdrop { background: #0009; }
+dialog h2 { margin-top: 0; }
+label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 16px 0 7px;
+}
+input {
+  width: 100%;
+  background: var(--inner);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--text);
+}
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+.empty {
+  color: var(--muted);
+  padding: 35px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+}
+footer {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 24px;
+}
+@media (max-width: 850px) {
+  .dashboard-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 420px) {
+  main { padding: 15px; }
+  .server-card { padding: 14px; }
+  .metric { padding: 12px; }
+  .metric-value { font-size: 21px; }
+}
+</style>
+</head>
+
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Gesture Control Dashboard</h1>
+      <p>Multi-ESP32 · TinyML · MQTT Monitoring</p>
+    </div>
+    <div class="toolbar">
+      <span id="connectionStatus">Disconnected</span>
+      <button id="connectButton" class="secondary">
+        Connect
+      </button>
+      <button id="addButton" class="add-button"
+              title="Add ESP32 Server">+</button>
+    </div>
+  </header>
+
+  <section id="dashboard" class="dashboard-grid"></section>
+
+  <footer>
+    Source: ESP32 Server MQTT prediction topics.
+    LED and PWM are estimated by the Server.
+    No Client telemetry is used.
+  </footer>
+</main>
+
+<dialog id="addDialog">
+  <form id="serverForm">
+    <h2>Add ESP32 Server</h2>
+    <p>Enter a unique MQTT topic prefix for this device.</p>
+
+    <label for="serverName">Server Name</label>
+    <input id="serverName" placeholder="ESP32 Arm"
+           maxlength="60" required>
+
+    <label for="serverTopic">MQTT Topic Prefix</label>
+    <input id="serverTopic"
+           placeholder="psu/gesture/arm01"
+           required>
+
+    <div class="dialog-actions">
+      <button type="button" class="secondary"
+              id="cancelButton">Cancel</button>
+      <button type="submit">Add Server</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const BROKER_URL = "ws://broker.hivemq.com:8000/mqtt";
+
+// Saved device definitions only, not prediction history.
+const STORAGE_KEY = "gestureDashboardServersV1";
+
+// MQTT messages are expected on:
+// PREFIX/prediction
+//
+// Example JSON:
+// {
+//   "sequence": 15,
+//   "gesture_id": 2,
+//   "gesture": "UP",
+//   "pwm": 64,
+//   "led_state": "ON",
+//   "uptime_ms": 18000
+// }
+
+const gestureNames = [
+  "TILT_LEFT",
+  "TILT_RIGHT",
+  "UP",
+  "DOWN",
+  "IDLE"
+];
+
+let client = null;
+let servers = [];
+let connected = false;
+let generation = 0;
+
+const dashboard = document.getElementById("dashboard");
+const dialog = document.getElementById("addDialog");
+const statusText = document.getElementById("connectionStatus");
+
+function validPrefix(prefix) {
+  return typeof prefix === "string" &&
+    prefix.length > 0 &&
+    prefix.length <= 180 &&
+    !/[+#\u0000-\u001f]/.test(prefix) &&
+    !prefix.startsWith("/") &&
+    !prefix.endsWith("/");
+}
+
+function loadServers() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(STORAGE_KEY)
+    );
+
+    if (Array.isArray(saved)) {
+      const used = new Set();
+
+      servers = saved
+        .filter(s =>
+          s &&
+          typeof s.name === "string" &&
+          validPrefix(s.topic) &&
+          !used.has(s.topic) &&
+          (used.add(s.topic), true)
+        )
+        .slice(0, 30)
+        .map(s => createServer(s.name, s.topic));
+
+      return;
+    }
+  } catch (error) {
+    console.warn("Cannot load saved servers", error);
+  }
+
+  servers = [
+    createServer("ESP32 Server 01", "psu/gesture/demo01")
+  ];
+}
+
+function createServer(name, topic) {
+  return {
+    name,
+    topic,
+    gesture: "--",
+    gestureID: null,
+    pwm: null,
+    ledState: "Unknown",
+    predictionCount: 0,
+    lastSequence: null,
+    lastUptime: null
+  };
+}
+
+function saveServers() {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(
+        servers.map(s => ({
+          name: s.name,
+          topic: s.topic
+        }))
+      )
+    );
+  } catch (error) {
+    console.warn("Cannot save device list", error);
+  }
+}
+
+function addMetric(grid, label, value, detail, color) {
+  const metric = document.createElement("div");
+  metric.className = "metric";
+
+  const labelElement = document.createElement("div");
+  labelElement.className = "metric-label";
+  labelElement.textContent = label;
+
+  const valueElement = document.createElement("div");
+  valueElement.className = "metric-value";
+  valueElement.textContent = value;
+
+  if (color) valueElement.classList.add(color);
+
+  const detailElement = document.createElement("div");
+  detailElement.className = "metric-detail";
+  detailElement.textContent = detail;
+
+  metric.append(labelElement, valueElement);
+
+  if (label === "PWM Brightness") {
+    const progress = document.createElement("div");
+    progress.className = "progress";
+
+    const fill = document.createElement("div");
+    fill.className = "progress-fill";
+    fill.style.width = detail === "Waiting for data"
+      ? "0%"
+      : `${(Number(value.split("/")[0]) / 255) * 100}%`;
+
+    progress.appendChild(fill);
+    metric.appendChild(progress);
+  }
+
+  metric.appendChild(detailElement);
+  grid.appendChild(metric);
+}
+
+function renderDashboard() {
+  dashboard.replaceChildren();
+
+  if (servers.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No servers added. Click + to add one.";
+    dashboard.appendChild(empty);
+    return;
+  }
+
+  servers.forEach(server => {
+    const card = document.createElement("article");
+    card.className = "server-card";
+
+    const header = document.createElement("div");
+    header.className = "card-header";
+
+    const info = document.createElement("div");
+
+    const title = document.createElement("h2");
+    title.textContent = server.name;
+
+    const topic = document.createElement("div");
+    topic.className = "topic-label";
+    topic.textContent = server.topic + "/prediction";
+
+    info.append(title, topic);
+
+    const remove = document.createElement("button");
+    remove.className = "remove-button";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => {
+      removeServer(server.topic);
+    });
+
+    header.append(info, remove);
+
+    const metrics = document.createElement("div");
+    metrics.className = "metrics";
+
+    addMetric(
+      metrics,
+      "Last Gesture",
+      server.gesture,
+      server.gestureID === null
+        ? "Waiting for data"
+        : `Gesture ID: ${server.gestureID}`,
+      "blue"
+    );
+
+    addMetric(
+      metrics,
+      "LED State",
+      server.ledState,
+      "Server estimated state",
+      server.ledState === "ON" ? "green" :
+      server.ledState === "OFF" ? "red" : ""
+    );
+
+    addMetric(
+      metrics,
+      "PWM Brightness",
+      server.pwm === null
+        ? "-- / 255"
+        : `${server.pwm} / 255`,
+      server.pwm === null
+        ? "Waiting for data"
+        : `${(server.pwm / 255 * 100).toFixed(1)}% duty cycle`,
+      ""
+    );
+
+    addMetric(
+      metrics,
+      "Total Predictions",
+      server.predictionCount.toLocaleString(),
+      "Received during this dashboard session",
+      ""
+    );
+
+    card.append(header, metrics);
+    dashboard.appendChild(card);
+  });
+}
+
+function topicFor(server) {
+  return server.topic + "/prediction";
+}
+
+function resetValues() {
+  servers.forEach(s => {
+    s.gesture = "--";
+    s.gestureID = null;
+    s.pwm = null;
+    s.ledState = "Unknown";
+    s.predictionCount = 0;
+    s.lastSequence = null;
+    s.lastUptime = null;
+  });
+
+  renderDashboard();
+}
+
+function setConnectionStatus(value) {
+  statusText.textContent = value;
+  connected = value === "Connected";
+
+  document.getElementById("connectButton").textContent =
+    connected ? "Disconnect" : "Connect";
+}
+
+function connectMQTT() {
+  if (connected) {
+    disconnectMQTT();
+    return;
+  }
+
+  if (typeof mqtt === "undefined") {
+    alert("MQTT.js could not load. Check your connection.");
+    return;
+  }
+
+  disconnectMQTT();
+  const thisGeneration = ++generation;
+
+  resetValues();
+  setConnectionStatus("Connecting...");
+
+  client = mqtt.connect(BROKER_URL, {
+    clientId: "gesture-web-" +
+      Math.random().toString(16).slice(2),
+    clean: true,
+    reconnectPeriod: 3000,
+    connectTimeout: 10000
+  });
+
+  const activeClient = client;
+
+  activeClient.on("connect", () => {
+    if (thisGeneration !== generation) return;
+
+    setConnectionStatus("Connected");
+
+    servers.forEach(s => {
+      activeClient.subscribe(topicFor(s), { qos: 0 });
+    });
+  });
+
+  activeClient.on("message", (topic, payload) => {
+    if (thisGeneration !== generation) return;
+
+    const server = servers.find(s => topicFor(s) === topic);
+    if (!server) return;
+
+    try {
+      const data = JSON.parse(payload.toString());
+      processPrediction(server, data);
+    } catch (error) {
+      console.warn("Invalid MQTT message", error);
+    }
+  });
+
+  activeClient.on("reconnect", () => {
+    if (thisGeneration === generation) {
+      setConnectionStatus("Reconnecting...");
+    }
+  });
+
+  activeClient.on("close", () => {
+    if (thisGeneration === generation) {
+      setConnectionStatus("Disconnected");
+    }
+  });
+
+  activeClient.on("error", error => {
+    console.error("MQTT error:", error);
+  });
+}
+
+function disconnectMQTT() {
+  generation++;
+
+  const oldClient = client;
+  client = null;
+
+  if (oldClient) oldClient.end(true);
+
+  setConnectionStatus("Disconnected");
+}
+
+function processPrediction(server, data) {
+  const id = Number(data.gesture_id);
+  const sequence = Number(data.sequence);
+
+  if (!Number.isInteger(id) || id < 0 || id > 4 ||
+      !Number.isSafeInteger(sequence) || sequence < 0) {
+    return;
+  }
+
+  // Ignore duplicated or old predictions.
+  // Accept a sequence reset when device uptime resets.
+  const uptime = Number(data.uptime_ms);
+  const validUptime =
+    Number.isFinite(uptime) && uptime >= 0;
+
+  if (server.lastSequence !== null &&
+      sequence <= server.lastSequence) {
+
+    const rebooted = validUptime &&
+      server.lastUptime !== null &&
+      uptime < server.lastUptime;
+
+    if (!rebooted) return;
+  }
+
+  server.lastSequence = sequence;
+  server.lastUptime = validUptime ? uptime : null;
+
+  server.gestureID = id;
+  server.gesture = gestureNames[id];
+  server.predictionCount++;
+
+  // LED/PWM values must come from Server MQTT payload.
+  // Do not infer them from a gesture alone.
+  const value = Number(data.pwm);
+
+  if (data.pwm !== undefined &&
+      data.pwm !== null &&
+      Number.isInteger(value) &&
+      value >= 0 && value <= 255) {
+
+    server.pwm = value;
+    server.ledState = value > 0 ? "ON" : "OFF";
+
+  } else {
+    server.pwm = null;
+    server.ledState = "Unknown";
+  }
+
+  renderDashboard();
+}
+
+function addServer(name, topic) {
+  if (!validPrefix(topic)) {
+    alert("Invalid MQTT topic prefix.");
+    return false;
+  }
+
+  if (servers.some(s => s.topic === topic)) {
+    alert("This MQTT topic is already added.");
+    return false;
+  }
+
+  if (servers.length >= 30) {
+    alert("Maximum 30 servers.");
+    return false;
+  }
+
+  const server = createServer(name, topic);
+  servers.push(server);
+
+  saveServers();
+  renderDashboard();
+
+  if (connected && client) {
+    client.subscribe(topicFor(server), { qos: 0 });
+  }
+
+  return true;
+}
+
+function removeServer(topic) {
+  if (client && connected) {
+    client.unsubscribe(topic + "/prediction");
+  }
+
+  servers = servers.filter(s => s.topic !== topic);
+  saveServers();
+  renderDashboard();
+}
+
+document.getElementById("connectButton")
+  .addEventListener("click", connectMQTT);
+
+document.getElementById("addButton")
+  .addEventListener("click", () => dialog.showModal());
+
+document.getElementById("cancelButton")
+  .addEventListener("click", () => dialog.close());
+
+document.getElementById("serverForm")
+  .addEventListener("submit", event => {
+    event.preventDefault();
+
+    const name = document.getElementById("serverName")
+      .value.trim();
+
+    const topic = document.getElementById("serverTopic")
+      .value.trim().replace(/\/+$/, "");
+
+    if (name && addServer(name, topic)) {
+      event.target.reset();
+      dialog.close();
+    }
+  });
+
+loadServers();
+renderDashboard();
+</script>
+
+</body>
+</html>
